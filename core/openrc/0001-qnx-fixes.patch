@@ -1,0 +1,164 @@
+diff -Naur openrc-0.63.orig/init.d/meson.build openrc-0.63/init.d/meson.build
+--- openrc-0.63.orig/init.d/meson.build	2026-02-02 20:30:16.000000000 +0000
++++ openrc-0.63/init.d/meson.build	2026-02-02 20:30:33.000000000 +0000
+@@ -82,6 +82,9 @@
+   'wscons.in',
+   ]
+ 
++init_QNX = [
++  ]
++
+ init_data = init_common
+ if os == 'dragonfly'
+   init_data = init_data + init_BSD
+@@ -91,6 +94,8 @@
+   init_data = init_data + init_Linux
+ elif os == 'netbsd'
+   init_data = init_data + init_BSD + init_NetBSD
++elif os == 'qnx'
++  init_data = init_QNX
+   endif
+ 
+ foreach init_d_file : init_data
+diff -Naur openrc-0.63.orig/meson.build openrc-0.63/meson.build
+--- openrc-0.63.orig/meson.build	2026-02-02 20:30:16.000000000 +0000
++++ openrc-0.63/meson.build	2026-02-02 20:30:33.000000000 +0000
+@@ -56,7 +56,7 @@
+ if pkg_prefix == ''
+   if os == 'dragonfly' or os == 'freebsd'
+     pkg_prefix = '/usr/local'
+-  elif os == 'gnu' or os == 'linux'
++  elif os == 'gnu' or os == 'linux' or os == 'qnx'
+     pkg_prefix = '/usr'
+   elif os == 'netbsd'
+     pkg_prefix = '/usr/pkg'
+diff -Naur openrc-0.63.orig/sh/start-stop-daemon.sh openrc-0.63/sh/start-stop-daemon.sh
+--- openrc-0.63.orig/sh/start-stop-daemon.sh	2026-02-02 20:30:16.000000000 +0000
++++ openrc-0.63/sh/start-stop-daemon.sh	2026-02-02 20:30:33.000000000 +0000
+@@ -25,6 +25,11 @@
+ 		notify="$ready"
+ 	fi
+ 
++	if [ -z "$priority" ]; then
++		# Default QNX service priority, just slightly higher than user processes
++		priority=20
++	fi
++
+ 	local _background=
+ 	ebegin "Starting ${name:-$RC_SVCNAME}"
+ 	if yesno "${command_background}"; then
+@@ -46,7 +51,7 @@
+ 	#the eval call is necessary for cases like:
+ 	# command_args="this \"is a\" test"
+ 	# to work properly.
+-	eval start-stop-daemon --start \
++	eval on -p "$priority" start-stop-daemon --start \
+ 		--exec $command \
+ 		${chroot:+--chroot} $chroot \
+ 		${directory:+--chdir} $directory \
+diff -Naur openrc-0.63.orig/src/librc/librc-daemon.c openrc-0.63/src/librc/librc-daemon.c
+--- openrc-0.63.orig/src/librc/librc-daemon.c	2026-02-02 20:30:16.000000000 +0000
++++ openrc-0.63/src/librc/librc-daemon.c	2026-02-02 20:30:33.000000000 +0000
+@@ -32,7 +32,7 @@
+ #include "helpers.h"
+ 
+ #if defined(__linux__) || (defined (__FreeBSD_kernel__) && defined(__GLIBC__)) \
+-	|| defined(__GNU__)
++	|| defined(__GNU__) || defined(__QNX__)
+ static bool
+ pid_is_exec(pid_t pid, const char *exec)
+ {
+diff -Naur openrc-0.63.orig/src/librc/librc-depend.c openrc-0.63/src/librc/librc-depend.c
+--- openrc-0.63.orig/src/librc/librc-depend.c	2026-02-02 20:30:16.000000000 +0000
++++ openrc-0.63/src/librc/librc-depend.c	2026-02-02 20:30:33.000000000 +0000
+@@ -25,8 +25,9 @@
+ #include <stdlib.h>
+ #include <string.h>
+ #include <sys/stat.h>
+-#include <time.h>
+ #include <unistd.h>
++#include <time.h>
++extern time_t time(time_t *__timer);
+ 
+ #include "queue.h"
+ #include "librc.h"
+diff -Naur openrc-0.63.orig/src/librc/librc.c openrc-0.63/src/librc/librc.c
+--- openrc-0.63.orig/src/librc/librc.c	2026-02-02 20:30:16.000000000 +0000
++++ openrc-0.63/src/librc/librc.c	2026-02-02 20:33:33.000000000 +0000
+@@ -44,6 +44,13 @@
+ #  define S_IXUGO (S_IXUSR | S_IXGRP | S_IXOTH)
+ #endif
+ 
++#ifdef __QNX__
++char *strchrnul(const char *s, int c){
++       char *p = strchr(s,c);
++       return p != NULL ? p : strchr(s, '\0');
++}
++#endif
++
+ /* File stream used for plugins to write environ vars to */
+ FILE *rc_environ_fd = NULL;
+ static int dirfds[RC_DIR_MAX];
+diff -Naur openrc-0.63.orig/src/meson.build openrc-0.63/src/meson.build
+--- openrc-0.63.orig/src/meson.build	2026-02-02 20:30:16.000000000 +0000
++++ openrc-0.63/src/meson.build	2026-02-02 20:30:34.000000000 +0000
+@@ -6,16 +6,16 @@
+ subdir('shared')
+ subdir('checkpath')
+ subdir('einfo')
+-subdir('fstabinfo')
++#subdir('fstabinfo')
+ subdir('halt')
+ subdir('is_newer_than')
+ subdir('is_older_than')
+ subdir('kill_all')
+ subdir('mark_service')
+-subdir('mountinfo')
++#subdir('mountinfo')
+ subdir('on_ac_power')
+ subdir('openrc')
+-subdir('openrc-init')
++#subdir('openrc-init')
+ subdir('openrc-run')
+ subdir('openrc-shutdown')
+ subdir('openrc-user')
+diff -Naur openrc-0.63.orig/src/openrc/rc-logger.c openrc-0.63/src/openrc/rc-logger.c
+--- openrc-0.63.orig/src/openrc/rc-logger.c	2026-02-02 20:30:16.000000000 +0000
++++ openrc-0.63/src/openrc/rc-logger.c	2026-02-02 20:30:34.000000000 +0000
+@@ -36,6 +36,8 @@
+ #  include <pty.h>
+ #elif defined(__NetBSD__) || defined(__OpenBSD__)
+ #  include <util.h>
++#elif defined(__QNX__)
++#  include <unix.h>
+ #else
+ #  include <libutil.h>
+ #endif
+diff -Naur openrc-0.63.orig/src/openrc-run/openrc-run.c openrc-0.63/src/openrc-run/openrc-run.c
+--- openrc-0.63.orig/src/openrc-run/openrc-run.c	2026-02-02 20:30:16.000000000 +0000
++++ openrc-0.63/src/openrc-run/openrc-run.c	2026-02-02 20:30:34.000000000 +0000
+@@ -42,6 +42,8 @@
+ #  include <pty.h>
+ #elif defined(__NetBSD__) || defined(__OpenBSD__)
+ #  include <util.h>
++#elif defined(__QNX__)
++#  include <unix.h>
+ #else
+ #  include <libutil.h>
+ #endif
+diff -Naur openrc-0.63.orig/src/shared/helpers.h openrc-0.63/src/shared/helpers.h
+--- openrc-0.63.orig/src/shared/helpers.h	2026-02-02 20:30:17.000000000 +0000
++++ openrc-0.63/src/shared/helpers.h	2026-02-02 20:30:34.000000000 +0000
+@@ -29,6 +29,7 @@
+ #include <dirent.h>
+ #include <unistd.h>
+ #include <fcntl.h>
++#include <sys/memstream.h>
+ 
+ #define ERRX do { fprintf (stderr, "out of memory\n"); exit (1); } while (0)
+ 
+@@ -237,3 +238,4 @@
+ }
+ 
+ #endif
++

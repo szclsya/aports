@@ -1,0 +1,104 @@
+# Maintainer: Leo Shen <yishen@qnx.com>
+# Alpine-Maintainer: Natanael Copa <ncopa@alpinelinux.org>
+pkgname=openrc
+pkgver=0.63
+_ver=${pkgver/_git*/}
+pkgrel=1
+pkgdesc="OpenRC manages the services, startup and shutdown of a host"
+url="https://github.com/OpenRC/openrc"
+vcs_url="$url"
+arch="all"
+license="BSD-2-Clause"
+depends="qnx-io-sock qnx-memstream"
+makedepends="qnx-io-sock-dev qnx-memstream-dev"
+makedepends_build="meson scdoc"
+checkdepends="sed"
+subpackages="$pkgname-dbg $pkgname-doc $pkgname-tools::noarch $pkgname-static $pkgname-dev
+    $pkgname-bash-completion $pkgname-zsh-completion"
+# We will add user service later
+source="$pkgname-$pkgver.tar.gz::https://github.com/OpenRC/openrc/archive/$pkgver.tar.gz
+    0001-qnx-fixes.patch"
+options="!check" # not updated to meson build system, require makefile build
+
+prepare() {
+    default_prepare
+    # meson overrides this with the aports tag,
+    # we get there first :)
+    sed -i -e "s|@VCS_TAG@|$pkgver|" \
+        src/shared/version.h.in \
+        src/shared/version.in
+}
+
+_build() {
+    LDFLAGS="-lmemstream -lsocket"
+    abuild-meson \
+        -Db_lto=false \
+        -Dzsh-completions=true \
+        -Dbash-completions=true \
+        -Dpkgconfig=true \
+        --default-library=both \
+        --prefix=/usr \
+        --bindir=bin \
+        --sbindir=bin \
+    --libdir=lib \
+    --libexecdir=lib \
+        "$@"
+}
+
+build() {
+    _build -Dpam=false output
+    ninja -C output
+}
+
+check() {
+    make check
+
+    # run unit tests for networking.initd
+    #cd "$srcdir"
+    #( set -e; sh test-networking.sh )
+}
+
+package() {
+    local i j
+
+    DESTDIR="$pkgdir" meson install --no-rebuild -C output
+
+    # we cannot have anything turned on by default
+    rm -f "$pkgdir"/etc/runlevels/*/*
+
+    # we still use our ifup/ifdown based net config
+    rm -f "$pkgdir"/etc/conf.d/network "$pkgdir"/etc/init.d/network
+
+    # our hostname init script reads hostname from /etc/hostname
+    rm -f "$pkgdir"/etc/conf.d/hostname
+
+    # additional documentation considered useful
+    mkdir -p "$pkgdir"/usr/share/doc/$pkgname/
+    install -m644 ./*.md "$pkgdir"/usr/share/doc/$pkgname/
+
+    #install -Dm644 "$srcdir/$pkgname.logrotate" "$pkgdir/etc/logrotate.d/$pkgname"
+    install -d "$pkgdir"/etc/local.d
+
+    # openrc upstream removed service(8) for whatever reason, put it back
+    install -d "$pkgdir"/usr/bin
+    ln -s rc-service "$pkgdir"/usr/bin/service
+
+    install -Dm755 "$pkgdir"/usr/share/openrc/support/deptree2dot/deptree2dot \
+        -t "$pkgdir"/usr/bin/
+    rm -r "$pkgdir"/usr/share/openrc/support/deptree2dot/deptree2dot
+}
+
+doc() {
+    default_doc
+    amove usr/share/openrc/support
+}
+
+tools() {
+    depends="perl"
+    amove usr/bin/deptree2dot
+}
+
+sha512sums="
+c3e5f5442ac7e04667894e315e451910425930bf6da2f8775197fa63d4bb631ef3fd7a350d85829fcbc62844ddfa107749c92bff2880a27b8ed254540251ab45  openrc-0.63.tar.gz
+544ad19700de8ec0d9747ae83ab1df25b2c89c3159320972c46803d5f31a1a62ba8b8b411043d68dbdbe379d5f6f1d2a4bfd2a79650242a7dab4c771f845fa68  0001-qnx-fixes.patch
+"
